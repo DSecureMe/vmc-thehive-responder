@@ -2,10 +2,10 @@
   "name": "VMC Responder",
   "version": "1.0.1-alpha3",
   "author": "DSecure.me",
-  "url": "https://github.com/DSecureMe/ralph-contex-responder",
+  "url": "https://github.com/DSecureMe/vmc-thehive-responder",
   "license": "Apache 2",
   "description": "Gets additional information's from VMC about asset",
-  "dataTypeList": ["thehive:alert"],
+  "dataTypeList": ["thehive:alert", "thehive:case"],
   "command": "vmc-responder/vmc.py",
   "baseConfig": "vmc",
   "configurationItems": [

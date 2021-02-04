@@ -19,58 +19,91 @@
  *
 """
 
+import re
 import json
 import requests
+
 from cortexutils.responder import Responder
 
-_VMC_GET_ASSET_MANAGER = '{}://{}:{}/api/v1/assets-manager/config?name={}'
-_VMC_GET_VULNS = '{}://{}:{}/api/v1/vulnerabilities?ip_address={}'
-_GET_RALPH_TOKEN = '{}://{}:{}/api-token-auth/'
-_RALPH_GET_ASSET_DATA = '{}://{}:{}/api/data-center-assets/?ethernet_set__ipaddress__address={}'
+RESPONDER_TAG = 'downloaded asset data from VMC'
+_RALPH_GET_DATA_CENTER_DATA = '{}://{}:{}/api/data-center-assets/?ethernet_set__ipaddress__address={}'
+_RALPH_GET_VIRTUAL_SERVER_DATA = '{}://{}:{}/api/virtual-servers/?ip={}'
 
 
 class VMC(Responder):
 
-    def __init__(self, job_directory=None):
-        super().__init__(job_directory)
-        self._host = self.get_param('config.vmc_host', 'localhost')
-        self._port = self.get_param('config.vmc_port', '80')
-        self._insecure_connection = self.get_param('config.vmc_isecure_connection', False)
-        self._schema = self.get_param('config.vmc_schema', 'http')
-        self._token = self.get_param('config.vmc_token', 'token')
-        self.ip_address = self.get_param('data.sourceRef')
+    def __init__(self):
+        super().__init__()
+        self._host = self.get_param(
+            'config.vmc_host', 'localhost')
+        self._port = self.get_param(
+            'config.vmc_port', '80')
+        self._insecure_connection = self.get_param(
+            'config.vmc_isecure_connection', False)
+        self._schema = self.get_param(
+            'config.vmc_schema', 'http')
+        self._token = self.get_param(
+            'config.vmc_token', 'passwd')
+        self.data_type = self.get_data()['_type']
 
     def operations(self, raw):
-        raw.append(self.build_operation('AddTagToAlert', tag='downloaded asset data from VMC'))
-        return super().operations(raw)
+        print(self.data_type)
+        if self.data_type in ['alert', 'task']:
+            return [self.build_operation(F'AddTagTo{self.data_type.capitalize()}', tag=RESPONDER_TAG)]
+        return super(VMC, self).operations(raw)
 
     def run(self):
         super().run()
         data = self.get_data()
-        report = {}
-        for tag in data['tags']:
+        print(data)
+        tags = data['tags']
 
-            try:
-                ralph_config = self._get_ralph_connection_config(tag)
-                report = {
-                    'asset_data': self._get_data_from_ralph(ralph_config),
-                    'vulnerabilities': self._get_vulns(ralph_config.get('tenant', None))
-                }
-            except Exception:
-                pass
+        ip_address = self._find_ip_address(tags)
+        ralph_config = self._get_ralph_connection_config(tags)
 
-        if report:
-            self.report(report)
-        else:
-            self.report({'asset_data': 'Not Found', 'vulnerabilities': 'Not Found'})
+        if ip_address and ralph_config:
+            self.report({
+                'asset_data': self._get_data_from_ralph(ralph_config, ip_address),
+                'vulnerabilities': self._get_vulns(ralph_config, ip_address)
+            })
+        elif not ip_address and not ralph_config:
+            self.report({'error': 'missing ip address and tenant in tag'})
+        elif not ralph_config:
+            self.report({'error': 'missing tenant config'})
+        elif not ip_address:
+            self.report({'error': 'missing ip_address'})
 
-    def _get_ralph_connection_config(self, tag):
-        url = _VMC_GET_ASSET_MANAGER.format(self._schema, self._host, self._port, tag)
-        return self._action('GET', url, {'Authorization': F'Token {self._token}'}, verify=not self._insecure_connection)
+    @staticmethod
+    def _find_ip_address(tags):
+        for tag in tags:
+            if re.match(r'\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\.|$)){4}\b', tag):
+                return tag
 
-    def _get_data_from_ralph(self, ralph_config):
-        url = _RALPH_GET_ASSET_DATA.format(
-            ralph_config['schema'], ralph_config['host'], ralph_config['port'], self.ip_address
+        return None
+
+    def _get_ralph_connection_config(self, tags):
+        for tag in tags:
+            tag = tag.split('-')[0]
+            url = F'{self._schema}://{self._host}:{self._port}/api/v1/assets-manager/config?name={tag}'
+            config = self._action('GET', url, {'Authorization': F'Token {self._token}'},
+                                  verify=not self._insecure_connection)
+            if config:
+                return config
+        return None
+
+    def _get_data_from_ralph(self, ralph_config, ip_address):
+        try:
+            data = self._get_data_from_ralph_base(ralph_config, _RALPH_GET_DATA_CENTER_DATA, ip_address)
+            if data:
+                return data
+            return self._get_data_from_ralph_base(ralph_config, _RALPH_GET_VIRTUAL_SERVER_DATA, ip_address)
+        except Exception as e:
+            print(e)
+        return {}
+
+    def _get_data_from_ralph_base(self, ralph_config, base_url, ip_address):
+        url = base_url.format(
+            ralph_config['schema'], ralph_config['host'], ralph_config['port'], ip_address
         )
         response = self._action('GET', url, headers={'Authorization': F'Token {self._get_ralph_token(ralph_config)}'},
                                 verify=ralph_config['insecure'])
@@ -84,27 +117,22 @@ class VMC(Responder):
             'username': ralph_config['username'],
             'password': ralph_config['password']
         }
-        url = _GET_RALPH_TOKEN.format(
-            ralph_config['schema'], ralph_config['host'], ralph_config['port']
-        )
+        url = F"{ralph_config['schema']}://{ralph_config['host']}:{ralph_config['port']}/api-token-auth/"
         result = self._action('POST', url, headers=headers, data=json.dumps(data), verify=ralph_config['insecure'])
         return result['token']
 
-    def _get_vulns(self, tenant):
-        url = _VMC_GET_VULNS.format(self._schema, self._host, self._port, self.ip_address)
-        if tenant:
-            url = '{}&tenant={}'.format(url, tenant)
+    def _get_vulns(self, ralph_config, ip_address):
+        url = F'{self._schema}://{self._host}:{self._port}/api/v1/vulnerabilities?ip_address={ip_address}'
+        if 'tenant' in ralph_config:
+            url = F"{url}&tenant={ralph_config['tenant']}"
         return self._action('GET', url, {'Authorization': F'Token {self._token}'}, verify=not self._insecure_connection)
 
     @staticmethod
     def _action(method, url, headers, **kwargs):
-        try:
-            resp = requests.request(method, url, headers=headers, **kwargs)
-        except Exception as ex:
-            raise Exception(F'Unable connect to {url} reason {ex}')
+        resp = requests.request(method, url, headers=headers, **kwargs)
 
         if resp.status_code != 200:
-            raise Exception(F'Failed to get data from {url}, status {resp.status_code}, {resp.content}')
+            return None
 
         return resp.json()
 
