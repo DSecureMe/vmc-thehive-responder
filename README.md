@@ -18,7 +18,6 @@ In the cortex admin panel you need to provide:
 - vmc_port
 - vmc_schema (http/https)
 - vmc_token
-z
 ![screen2](./images/cortex.png)
 
 
