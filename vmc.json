@@ -1,0 +1,52 @@
+{
+  "name": "VMC Responder",
+  "version": "1.0.1-alpha3",
+  "author": "DSecure.me",
+  "url": "https://github.com/DSecureMe/vmc-thehive-responder",
+  "license": "Apache 2",
+  "description": "Gets additional information's from VMC about asset",
+  "dataTypeList": ["thehive:alert", "thehive:case"],
+  "command": "vmc-responder/vmc.py",
+  "baseConfig": "vmc",
+  "configurationItems": [
+    {
+      "name": "vmc_host",
+      "description": "VMC host location",
+      "type": "string",
+      "multi": false,
+      "required": true
+    },
+    {
+      "name": "vmc_port",
+      "description": "VMC port",
+      "type": "number",
+      "multi": false,
+      "required": true,
+      "defaultValue": "localhost"
+    },
+    {
+      "name": "vmc_schema",
+      "description": "VMC connection schema",
+      "type": "string",
+      "multi": false,
+      "required": true,
+      "defaultValue": "http"
+    },
+    {
+      "name": "vmc_isecure_connection",
+      "description": "Validate vmc certificate",
+      "type": "boolean",
+      "multi": false,
+      "required": true,
+      "defaultValue": false
+    },
+    {
+      "name": "vmc_token",
+      "description": "VMC token",
+      "type": "string",
+      "multi": false,
+      "required": true,
+      "defaultValue": "ralph"
+    }
+  ]
+}
